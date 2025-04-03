@@ -9,6 +9,14 @@ Please note: the API used by this module is an **internal, limited, and unstable
 
 ---
 
+## Screenshots
+
+![Screenshot](/docs/screenshot-action-playgroup.png)
+
+![Screenshot](/docs/screenshot-connection-setup.png)
+
+---
+
 ## Important Notice
 This project is my **first-time development of a Companion module** and my first experience working with **JavaScript**. Therefore, it is unlikely to adhere to best practices or advanced programming paradigms. Contributions and constructive feedback from other developers are highly welcome to help improve this module's functionality and code quality.
 
