@@ -1,28 +1,16 @@
 {
-	"id": "generic-http",
-	"name": "generic-http",
-	"shortname": "http",
-	"description": "generic-http",
-	"version": "0.0.0",
+	"id": "superconductor",
+	"name": "superconductor",
+	"shortname": "superconductor",
+	"description": "superconductor",
+	"version": "1.0.0",
 	"license": "MIT",
-	"repository": "git+https://github.com/bitfocus/companion-module-generic-http.git",
-	"bugs": "https://github.com/bitfocus/companion-module-generic-http/issues",
+	"repository": "git+https://github.com/ATC-Productions/companion-module-superconductor.git",
+	"bugs": "https://github.com/ATC-Productions/companion-module-superconductor/issues",
 	"maintainers": [
 		{
-			"name": "William Viker",
-			"email": "william@bitfocus.io"
-		},
-		{
-			"name": "Keith Rocheck",
-			"email": "keith.rocheck@gmail.com"
-		},
-		{
-			"name": "Jeffrey Davidsz",
-			"email": "jeffrey.davidsz@vicreo.eu"
-		},
-		{
-			"name": "Joseph Adams",
-			"email": "josephdadams@gmail.com"
+			"name": "James Morgan",
+			"email": ""
 		}
 	],
 	"legacyIds": [],
@@ -32,12 +20,14 @@
 		"apiVersion": "0.0.0",
 		"entrypoint": "../index.js"
 	},
-	"manufacturer": "Generic",
+	"manufacturer": "SuperflyTV",
 	"products": [
-		"HTTP Requests"
+		"SuperConductor"
 	],
 	"keywords": [
 		"Protocol",
-		"Generic"
+		"SuperConductor",
+		"SuperflyTV",
+		"CasparCG"
 	]
 }

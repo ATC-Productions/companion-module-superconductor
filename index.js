@@ -1,326 +1,278 @@
-import { InstanceBase, runEntrypoint, InstanceStatus } from '@companion-module/base'
-import got from 'got'
-import { HttpProxyAgent, HttpsProxyAgent } from 'hpagent'
-import { configFields } from './config.js'
-import { upgradeScripts } from './upgrade.js'
-import { FIELDS } from './fields.js'
-import JimpRaw from 'jimp'
+import { InstanceBase, runEntrypoint, InstanceStatus } from '@companion-module/base';
+import { configFields } from './config.js';
+import got from 'got';
 
-// Webpack makes a mess..
-const Jimp = JimpRaw.default || JimpRaw
+class SuperConductorInstance extends InstanceBase {
+    constructor(internal) {
+        super(internal);
+        this.rundownIds = [];
+        this.rundownGroups = {}; // Store groups by rundown ID
+        this.allGroups = []; // Store combined group list
+		this.presets = {};
+    }
 
-class GenericHttpInstance extends InstanceBase {
-	configUpdated(config) {
-		this.config = config
+    async init(config) {
+        this.config = config;
+        await this.updateRundowns();
+        this.initActions();
+        this.initFeedbacks();
+        this.updateStatus(InstanceStatus.Ok);
+		this.pollInterval = setInterval(() => {
+            this.updateRundowns();
+        }, 30000); // 30000 ms = 30 seconds
+    }
 
-		this.initActions()
-		this.initFeedbacks()
-	}
+    destroy() {
+        // No need to close any connections with got.
+        // Clear the timer when the instance is destroyed
+        if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+        }
+    }
 
-	init(config) {
-		this.config = config
+    async configUpdated(config) {
+        this.config = config;
+        await this.updateRundowns();
+        this.initActions();
+        this.initFeedbacks();
+    }
 
-		this.updateStatus(InstanceStatus.Ok)
+    getConfigFields() {
+        return configFields;
+    }
 
-		this.initActions()
-		this.initFeedbacks()
-	}
+    getBaseUrl() {
+        const { host, port } = this.config;
+        return `http://${host}:${port}/api/internal`;
+    }
 
-	// Return config fields for web config
-	getConfigFields() {
-		return configFields
-	}
+    async sendRequest(endpoint, method = 'GET', data) {
+        const url = `${this.getBaseUrl()}${endpoint}`;
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+        let requestOptions = {
+            method,
+            headers
+        };
 
-	// When module gets deleted
-	async destroy() {
-		// Stop any running feedback timers
-		for (const timer of Object.values(this.feedbackTimers)) {
-			clearInterval(timer)
-		}
-	}
+        if (data && method !== 'GET') { // only add body if data and not GET
+            requestOptions.body = JSON.stringify(data);
+        }
 
-	async prepareQuery(context, action, includeBody) {
-		let url = await context.parseVariablesInString(action.options.url || '')
-		if (url.substring(0, 4) !== 'http') {
-			if (this.config.prefix && this.config.prefix.length > 0) {
-				url = `${this.config.prefix}${url.trim()}`
-			}
-		}
+        try {
+            const response = await got(url, requestOptions);
+            try {
+                const body = JSON.parse(response.body);
+                return body;
+            } catch (error) {
+                return response.body;
+            }
+        } catch (error) {
+            this.log('error', `Error sending request to ${url}: ${error.message}`);
+            this.updateStatus(InstanceStatus.ConnectionFailure, error.message);
+            throw error;
+        }
+    }
 
-		let body = {}
-		if (includeBody && action.options.body && action.options.body.trim() !== '') {
-			body = await context.parseVariablesInString(action.options.body || '')
+    async updateRundowns() {
+        try {
+            const response = await this.sendRequest('/rundowns', 'GET');
+            this.rundownIds = response.rundownIds;
+            this.rundownGroups = {}; // Clear stored groups
+            this.allGroups = []; // Clear combined group list
+            if (this.rundownIds.length > 0) {
+                // Fetch groups for all rundowns
+                await Promise.all(
+                    this.rundownIds.map(async (rundownId) => {
+                        await this.updateGroups(rundownId);
+                    })
+                );
+                this.combineGroups(); // Combine groups after fetching
+                this.updateActions(); // Update actions after groups are fetched
+            } else {
+                this.log('warn', 'No rundowns found.');
+            }
+        } catch (error) {
+            this.log('error', `Error fetching rundowns: ${error}`);
+            this.updateStatus(InstanceStatus.ConnectionFailure);
+            this.rundownIds = [];
+        }
+    }
 
-			if (action.options.contenttype === 'application/json') {
-				//only parse the body if we are explicitly sending application/json
-				try {
-					body = JSON.parse(body)
-				} catch (e) {
-					this.log('error', `HTTP ${action.actionId.toUpperCase()} Request aborted: Malformed JSON Body (${e.message})`)
-					this.updateStatus(InstanceStatus.UnknownError, e.message)
-					return
-				}
-			}
-		}
+    async updateGroups(rundownId) {
+        try {
+            const response = await this.sendRequest(`/rundown/?rundownId=${rundownId}`, 'GET');
+            if (response && response.rundown && response.rundown.groups && Array.isArray(response.rundown.groups)) {
+                this.rundownGroups[rundownId] = response.rundown.groups.map((group) => ({
+                    id: group.id,
+                    label: group.name,
+                }));
+                this.log('debug', `Fetched groups for rundown ID ${rundownId}: ${JSON.stringify(this.rundownGroups[rundownId])}`);
+            } else {
+                this.rundownGroups[rundownId] = [];
+                this.log('warn', `No groups found for rundown ID ${rundownId}`);
+            }
+        } catch (error) {
+            this.log('error', `Error fetching groups for rundown ${rundownId}: ${error}`);
+            this.updateStatus(InstanceStatus.ConnectionFailure);
+            this.rundownGroups[rundownId] = [];
+        }
+    }
 
-		let headers = {}
-		if (action.options.header.trim() !== '') {
-			const headersStr = await context.parseVariablesInString(action.options.header || '')
+    combineGroups() {
+      this.allGroups = [];
+      this.rundownIds.forEach(rundownId => {
+        const rundownName = rundownId.replace(".rundown.json",""); // Remove trailing .rundown.json
+          if (this.rundownGroups[rundownId]) {
+            this.rundownGroups[rundownId].forEach(group => {
+                this.allGroups.push({
+                    id: `${rundownId}|||${group.id}`,  // Unique ID: rundownId-groupId
+                    label: `${rundownName}/${group.label}`, // e.g., RundownName/GroupName
+					groupname: `${group.label}` // e.g., RundownName/GroupName
+                });
+            });
+			this.initPresets();
+          }
+      });
+    }
 
-			try {
-				headers = JSON.parse(headersStr)
-			} catch (e) {
-				this.log('error', `HTTP ${action.actionId.toUpperCase()} Request aborted: Malformed JSON Header (${e.message})`)
-				this.updateStatus(InstanceStatus.UnknownError, e.message)
-				return
-			}
-		}
+    initActions() {
+        this.updateActions();
+    }
 
-		if (includeBody && action.options.contenttype) {
-			headers['Content-Type'] = action.options.contenttype
-		}
+    updateActions() {
+        const actions = {
+            'playGroup': {
+                name: 'Play Group',
+                options: [
+                    {
+                        type: 'dropdown',
+                        label: 'Group',
+                        id: 'groupId',
+                        choices: this.allGroups.map((group) => ({ id: group.id, label: group.label })),
+                        required: true,
+                    },
+                ],
+                callback: async (action) => {
+                    try {
+                        const [rundownId, groupId] = action.options.groupId.split('|||'); // Extract rundownId and groupId
+                        await this.sendRequest(`/playGroup/?rundownId=${rundownId}&groupId=${groupId}`, 'POST');
+                    } catch (error) {
+                        this.log('error', `Play Group Action Failed: ${error}`);
+                    }
+                },
+            },
+            'stopGroup': {
+                name: 'Stop Group',
+                options: [
+                    {
+                        type: 'dropdown',
+                        label: 'Group',
+                        id: 'groupId',
+                        choices: this.allGroups.map((group) => ({ id: group.id, label: group.label })),
+                        required: true,
+                    },
+                ],
+                callback: async (action) => {
+                    try {
+                        const [rundownId, groupId] = action.options.groupId.split('|||'); // Extract rundownId and groupId
 
-		const options = {
-			https: {
-				rejectUnauthorized: this.config.rejectUnauthorized,
-			},
+                        await this.sendRequest(`/stopGroup/?rundownId=${rundownId}&groupId=${groupId}`, 'POST');
+                    } catch (error) {
+                        this.log('error', `Stop Group Action Failed: ${error}`);
+                    }
+                },
+            },
+			'pauseGroup': {
+                name: 'Pause Group',
+                options: [
+                    {
+                        type: 'dropdown',
+                        label: 'Group',
+                        id: 'groupId',
+                        choices: this.allGroups.map((group) => ({ id: group.id, label: group.label })),
+                        required: true,
+                    },
+                ],
+                callback: async (action) => {
+                    try {
+                        const [rundownId, groupId] = action.options.groupId.split('|||'); // Extract rundownId and groupId
 
-			headers,
-		}
+                        await this.sendRequest(`/pauseGroup/?rundownId=${rundownId}&groupId=${groupId}`, 'POST');
+                    } catch (error) {
+                        this.log('error', `Pause Group Action Failed: ${error}`);
+                    }
+                },
+            },
+        };
+        this.setActionDefinitions(actions);
+    }
 
-		if (includeBody) {
-			if (typeof body === 'string') {
-				body = body.replace(/\\n/g, '\n')
-				options.body = body
-			} else if (body) {
-				options.json = body
-			}
-		}
+    initFeedbacks() {
+        const feedbacks = {
+            // Add feedbacks here as needed.
+        };
+        this.setFeedbackDefinitions(feedbacks);
+    }
 
-		if(this.config.proxyAddress && this.config.proxyAddress.length > 0) {
-			options.agent = {
-				http: new HttpProxyAgent({
-					proxy: this.config.proxyAddress
-				}),
-				https: new HttpsProxyAgent({
-					proxy: this.config.proxyAddress
-				})
-			}
-		}
-
-		return {
-			url,
-			options,
-		}
-	}
-
-	initActions() {
-		const urlLabel = this.config.prefix ? 'URI' : 'URL'
-
-		this.setActionDefinitions({
-			post: {
-				name: 'POST',
-				options: [FIELDS.Url(urlLabel),
-					  FIELDS.Body,
-					  FIELDS.Header,
-					  FIELDS.ContentType,
-					 {
-						type: 'custom-variable',
-						label: 'JSON Response Data Variable',
-						id: 'jsonResultDataVariable',
-					},
+	initPresets() {
+        this.presets = {};
+        this.allGroups.forEach((group) => {
+            const [rundownId, groupId] = group.id.split('|||');
+            const rundownName = rundownId.replace(".rundown.json", "");
+            this.presets[group.id] = {
+                type: 'button', // This must be 'button' for now
+                category: rundownName, // This groups presets into categories in the ui.
+                name: group.groupname, // A name for the preset.
+                style: {
+                    // This is the minimal set of style properties you must define
+                    text: group.groupname, // You can use variables from your module here
+                    size: 'auto',
+                    color: 16777215,
+                    bgcolor: 0,
+                },
+                steps: [
+                    {
+                        down: [
+                            {
+                                // add an action on down press
+                                actionId: 'playGroup',
+                                options: {
+                                    // options values to use
+                                    groupId: group.id,
+                                },
+                            },
+                        ],
+                        up: [],
+                    },
 					{
-						type: 'checkbox',
-						label: 'JSON Stringify Result',
-						id: 'result_stringify',
-						default: true,
-					}
-				],
-				callback: async (action, context) => {
-					const { url, options } = await this.prepareQuery(context, action, true)
+                        down: [
+                            {
+                                // add an action on down press
+                                actionId: 'stopGroup',
+                                options: {
+                                    // options values to use
+                                    groupId: group.id,
+                                },
+                            },
+                        ],
+                        up: [],
+                    },
+                ],
+                feedbacks: [
+					
+				], // You can add some presets from your module here
+            };
+        });
+        this.setPresetDefinitions(this.presets);
+    }
 
-					try {
-						const response = await got.post(url, options)
+    updateStatus(status, message) {
+        super.updateStatus(status, message);
+    }
 
-						// store json result data into retrieved dedicated custom variable
-						const jsonResultDataVariable = action.options.jsonResultDataVariable
-						if (jsonResultDataVariable) {
-							this.log('debug', `Writing result to ${jsonResultDataVariable}`)
-
-							let resultData = response.body
-
-							if (!action.options.result_stringify) {
-								try {
-									resultData = JSON.parse(resultData)
-								} catch (error) {
-									//error stringifying
-								}
-							}
-
-							this.setCustomVariableValue(jsonResultDataVariable, resultData)
-						}
-						
-						this.updateStatus(InstanceStatus.Ok)
-					} catch (e) {
-						this.log('error', `HTTP POST Request failed (${e.message})`)
-						this.updateStatus(InstanceStatus.UnknownError, e.code)
-					}
-				},
-			},
-			get: {
-				name: 'GET',
-				options: [
-					FIELDS.Url(urlLabel),
-					FIELDS.Header,
-					{
-						type: 'custom-variable',
-						label: 'JSON Response Data Variable',
-						id: 'jsonResultDataVariable',
-					},
-					{
-						type: 'checkbox',
-						label: 'JSON Stringify Result',
-						id: 'result_stringify',
-						default: true,
-					},
-				],
-				callback: async (action, context) => {
-					const { url, options } = await this.prepareQuery(context, action, false)
-
-					try {
-						const response = await got.get(url, options)
-
-						// store json result data into retrieved dedicated custom variable
-						const jsonResultDataVariable = action.options.jsonResultDataVariable
-						if (jsonResultDataVariable) {
-							this.log('debug', `Writing result to ${jsonResultDataVariable}`)
-
-							let resultData = response.body
-
-							if (!action.options.result_stringify) {
-								try {
-									resultData = JSON.parse(resultData)
-								} catch (error) {
-									//error stringifying
-								}
-							}
-
-							this.setCustomVariableValue(jsonResultDataVariable, resultData)
-						}
-
-						this.updateStatus(InstanceStatus.Ok)
-					} catch (e) {
-						this.log('error', `HTTP GET Request failed (${e.message})`)
-						this.updateStatus(InstanceStatus.UnknownError, e.code)
-					}
-				},
-			},
-			put: {
-				name: 'PUT',
-				options: [FIELDS.Url(urlLabel), FIELDS.Body, FIELDS.Header, FIELDS.ContentType],
-				callback: async (action, context) => {
-					const { url, options } = await this.prepareQuery(context, action, true)
-
-					try {
-						await got.put(url, options)
-
-						this.updateStatus(InstanceStatus.Ok)
-					} catch (e) {
-						this.log('error', `HTTP PUT Request failed (${e.message})`)
-						this.updateStatus(InstanceStatus.UnknownError, e.code)
-					}
-				},
-			},
-			patch: {
-				name: 'PATCH',
-				options: [FIELDS.Url(urlLabel), FIELDS.Body, FIELDS.Header, FIELDS.ContentType],
-				callback: async (action, context) => {
-					const { url, options } = await this.prepareQuery(context, action, true)
-
-					try {
-						await got.patch(url, options)
-
-						this.updateStatus(InstanceStatus.Ok)
-					} catch (e) {
-						this.log('error', `HTTP PATCH Request failed (${e.message})`)
-						this.updateStatus(InstanceStatus.UnknownError, e.code)
-					}
-				},
-			},
-			delete: {
-				name: 'DELETE',
-				options: [FIELDS.Url(urlLabel), FIELDS.Body, FIELDS.Header],
-				callback: async (action, context) => {
-					const { url, options } = await this.prepareQuery(context, action, true)
-
-					try {
-						await got.delete(url, options)
-
-						this.updateStatus(InstanceStatus.Ok)
-					} catch (e) {
-						this.log('error', `HTTP DELETE Request failed (${e.message})`)
-						this.updateStatus(InstanceStatus.UnknownError, e.code)
-					}
-				},
-			},
-		})
-	}
-
-	feedbackTimers = {}
-
-	initFeedbacks() {
-		const urlLabel = this.config.prefix ? 'URI' : 'URL'
-
-		this.setFeedbackDefinitions({
-			imageFromUrl: {
-				type: 'advanced',
-				name: 'Image from URL',
-				options: [FIELDS.Url(urlLabel), FIELDS.Header, FIELDS.PollInterval],
-				subscribe: (feedback) => {
-					// Ensure existing timer is cleared
-					if (this.feedbackTimers[feedback.id]) {
-						clearInterval(this.feedbackTimers[feedback.id])
-						delete this.feedbackTimers[feedback.id]
-					}
-
-					// Start new timer if needed
-					if (feedback.options.interval) {
-						this.feedbackTimers[feedback.id] = setInterval(() => {
-							this.checkFeedbacksById(feedback.id)
-						}, feedback.options.interval)
-					}
-				},
-				unsubscribe: (feedback) => {
-					// Ensure timer is cleared
-					if (this.feedbackTimers[feedback.id]) {
-						clearInterval(this.feedbackTimers[feedback.id])
-						delete this.feedbackTimers[feedback.id]
-					}
-				},
-				callback: async (feedback, context) => {
-					try {
-						const { url, options } = await this.prepareQuery(context, feedback, false)
-
-						const res = await got.get(url, options)
-
-						// Scale image to a sensible size
-						const img = await Jimp.read(res.rawBody)
-						const png64 = await img
-							.scaleToFit(feedback.image?.width ?? 72, feedback.image?.height ?? 72)
-							.getBase64Async('image/png')
-
-						return {
-							png64,
-						}
-					} catch (e) {
-						// Image failed to load so log it and output nothing
-						this.log('error', `Failed to fetch image: ${e}`)
-						return {}
-					}
-				},
-			},
-		})
-	}
 }
 
-runEntrypoint(GenericHttpInstance, upgradeScripts)
+runEntrypoint(SuperConductorInstance, []);

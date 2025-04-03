@@ -1,24 +1,21 @@
 {
-	"name": "generic-http",
-	"version": "2.3.0",
-	"main": "index.js",
-	"type": "module",
-	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/bitfocus/companion-module-generic-http.git"
-	},
-	"license": "MIT",
-	"dependencies": {
-		"@companion-module/base": "~1.10.0",
-		"got": "^13.0.0",
-		"hpagent": "^1.2.0",
-		"jimp": "^0.22.12"
-	},
-	"devDependencies": {
-		"@companion-module/tools": "^1.5.1"
-	},
-	"packageManager": "yarn@4.4.1"
+  "name": "companion-module-superconductor",
+  "packageManager": "yarn@4.8.1",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ATC-Productions/companion-module-superconductor.git"
+  },
+  "dependencies": {
+    "@companion-module/base": "~1.10.0",
+    "got": "^13.0.0",
+    "hpagent": "^1.2.0"
+  },
+  "devDependencies": {
+    "@companion-module/tools": "^1.5.1"
+  }
 }
