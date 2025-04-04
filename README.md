@@ -4,8 +4,17 @@ This is a **Bitfocus Companion** module for controlling SuperFlyTV's **SuperCond
 
 - Playing, pausing, and stopping groups across multiple rundowns.
 - Basic preset functionality for quick workflow optimization.
+- Feedback for determining whether a group is currently playing.
 
 Please note: the API used by this module is an **internal, limited, and unstable HTTP API**. While it has been available since the last release of SuperConductor in 2024, it may undergo changes that could impact this module's functionality.
+
+## Polling Intervals
+
+The module config allows setting two different polling intervals; one for checking the status of rundowns and another for checking the status of groups.  The rundowns poller is responsible for periodically checking your rundowns for new groups to fill the drop-down lists on actions and feedbacks.  You shouldn't need this set very high, but it is recommended to be above 10 seconds.
+
+The groups poller is responsible for checking the status of groups to determine if they are playing or paused.  This is one you need to check more often depending on how quickly you'd like Companion to be able to see changes in playback status.  Note that it's one API call for every group you're monitoring (but we only check once per group, no matter how many buttons are interested) so you don't want this to get out of control.  You can set it as low as one second if you're game.
+
+The default values are 30 seconds for rundowns and 10 seconds for groups
 
 ---
 

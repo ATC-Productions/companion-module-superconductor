@@ -17,4 +17,26 @@ export const configFields = [
 		regex: '^\d{1,5}$',
 		required: true,
 	},
+	{
+		type: 'number',
+		id: 'rundownPollInterval',
+		label: 'Rundown poll interval (seconds)',
+		width: 4,
+		min: 10,
+		max: 300,
+		default: 30, // Changed default port to 5500
+		regex: '^\d{1,3}$',
+		required: true,
+	},
+	{
+		type: 'number',
+		id: 'groupPollInterval',
+		label: 'Group poll interval (seconds)',
+		min: 1,
+		max: 30,
+		width: 4,
+		default: 5, // Changed default port to 5500
+		regex: '^\d{1,2}$',
+		required: true,
+	},
 ]
